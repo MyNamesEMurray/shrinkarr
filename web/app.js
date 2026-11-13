@@ -107,19 +107,22 @@ const catLabel = { check: 'Checks', video: 'Video', audio: 'Audio', subtitles: '
 
 // ---------- login ----------
 let loginOpen = false;
-function showLogin() {
+async function showLogin() {
   if (loginOpen) return;
   loginOpen = true;
+  const a = await get('/auth').catch(() => ({ password: true }));
   const pw = h('input', { type: 'password', autocomplete: 'current-password', 'aria-label': 'Password' });
-  let close;
   const go = act(async () => {
     await post('/login', { password: pw.value });
     location.reload();
   });
-  close = openModal(h('form', { onsubmit: e => { e.preventDefault(); go(); } },
+  openModal(h('div', {},
     h('h1', {}, 'Shrinkarr'),
-    h('label', { class: 'f' }, h('span', {}, 'Password'), pw),
-    h('button', { class: 'btn primary', type: 'submit' }, 'Log in')), { locked: true });
+    a.sso ? h('a', { class: 'btn primary', href: '/api/oidc/login', style: 'width:100%;justify-content:center' }, 'Sign in with SSO') : null,
+    a.sso && a.password ? h('p', { class: 'muted small', style: 'text-align:center' }, 'or') : null,
+    a.password ? h('form', { onsubmit: e => { e.preventDefault(); go(); } },
+      h('label', { class: 'f' }, h('span', {}, 'Password'), pw),
+      h('button', { class: 'btn' + (a.sso ? '' : ' primary'), type: 'submit' }, 'Log in')) : null), { locked: true });
 }
 
 // ---------- folder / file browser ----------
@@ -795,6 +798,33 @@ async function pageSettings(app) {
         h('button', { class: 'btn', onclick: act(async () => { await post('/password', { password: pw.value }); toast('Password set. Log in again.'); route(); }) }, st.passwordSet ? 'Change' : 'Turn on'),
         st.passwordSet ? h('button', { class: 'btn danger', onclick: act(async () => { if (!confirm('Remove the password?')) return; await post('/password', { password: '' }); toast('Password removed'); route(); }) }, 'Turn off') : null,
         st.passwordSet ? h('button', { class: 'btn', onclick: act(async () => { await post('/logout'); location.reload(); }) }, 'Log out') : null)),
+
+    h('form', { class: 'card', style: 'margin-top:14px', onsubmit: act(async e => {
+        e.preventDefault();
+        const turningOn = s.oidcIssuer && !st.settings.oidcIssuer;
+        if (turningOn && !st.passwordSet && !confirm('After saving, everyone must sign in with SSO. Test it in a private window before closing this one. Continue?')) return;
+        await post('/settings', s);
+        toast(s.oidcIssuer ? 'SSO saved' : 'SSO off');
+        route();
+      }) },
+      h('h3', {}, 'Single sign-on (SSO)'),
+      h('p', { class: 'small muted' }, 'Sign in through Authentik, Authelia, Keycloak, Pocket ID or any OpenID Connect provider. Leave the issuer empty to turn SSO off.'),
+      h('details', { class: 'small', style: 'margin-bottom:12px' }, h('summary', {}, 'Authentik setup'),
+        h('ol', {},
+          h('li', {}, 'Applications → Providers → Create → OAuth2/OpenID Provider. Client type: Confidential.'),
+          h('li', {}, 'Redirect URI: ', h('code', {}, location.origin + '/api/oidc/callback'), ' (use the address you open Shrinkarr at).'),
+          h('li', {}, 'Create an Application for that provider. Bind users or a group to it to control who can sign in.'),
+          h('li', {}, 'Issuer below: the provider\'s "OpenID Configuration Issuer", e.g. https://auth.example.com/application/o/shrinkarr'))),
+      h('div', { class: 'form-grid' },
+        field('Issuer URL', bind('oidcIssuer', 'url', { placeholder: 'https://auth.example.com/application/o/shrinkarr' })),
+        field('Client ID', bind('oidcClientId')),
+        field('Client secret', bind('oidcSecret', 'password', { autocomplete: 'off', placeholder: st.oidcSecretSet ? 'saved (leave empty to keep)' : '' })),
+        field('Allowed users or groups', bind('oidcAllowed', 'text', { placeholder: 'empty = anyone the provider lets in' }), 'Comma separated usernames, emails or group names.')),
+      h('p', { class: 'small muted' }, 'Redirect URI to register: ', h('code', {}, location.origin + '/api/oidc/callback')),
+      h('p', { class: 'small muted' }, 'Locked out? Start the container with SHRINKARR_DISABLE_AUTH=1, fix the settings, then remove it.'),
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, 'Save SSO'),
+        st.user ? h('span', { class: 'small muted' }, 'Signed in as ' + st.user) : null,
+        st.user ? h('button', { class: 'btn sm', type: 'button', onclick: act(async () => { await post('/logout'); location.reload(); }) }, 'Log out') : null)),
 
     h('div', { class: 'card', style: 'margin-top:14px' }, h('h3', {}, 'Setup'),
       h('button', { class: 'btn sm', onclick: () => wizard() }, 'Run the setup wizard again')));

@@ -25,10 +25,51 @@ import (
 //go:embed web
 var webFS embed.FS
 
+type session struct {
+	exp  time.Time
+	user string
+}
+
 var (
 	sessMu   sync.Mutex
-	sessions = map[string]time.Time{}
+	sessions = map[string]session{}
+	// Escape hatch if SSO is misconfigured and you're locked out.
+	authDisabled = os.Getenv("SHRINKARR_DISABLE_AUTH") == "1"
 )
+
+func authRequired() bool {
+	s := cfg()
+	return !authDisabled && (s.PasswordHash != "" || s.OIDCIssuer != "")
+}
+
+// newSession logs the browser in for 30 days and drops expired sessions.
+func newSession(w http.ResponseWriter, user string) {
+	tok := make([]byte, 32)
+	rand.Read(tok)
+	t := hex.EncodeToString(tok)
+	sessMu.Lock()
+	for k, s := range sessions {
+		if time.Now().After(s.exp) {
+			delete(sessions, k)
+		}
+	}
+	sessions[t] = session{exp: time.Now().Add(30 * 24 * time.Hour), user: user}
+	sessMu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: "shrinkarr", Value: t, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 30 * 86400})
+}
+
+func sessionUser(r *http.Request) string {
+	c, err := r.Cookie("shrinkarr")
+	if err != nil {
+		return ""
+	}
+	sessMu.Lock()
+	defer sessMu.Unlock()
+	if s, ok := sessions[c.Value]; ok && time.Now().Before(s.exp) {
+		return s.user
+	}
+	return ""
+}
 
 func hashPassword(pw, saltHex string) string {
 	salt, _ := hex.DecodeString(saltHex)
@@ -37,17 +78,7 @@ func hashPassword(pw, saltHex string) string {
 }
 
 func authed(r *http.Request) bool {
-	if cfg().PasswordHash == "" {
-		return true
-	}
-	c, err := r.Cookie("shrinkarr")
-	if err != nil {
-		return false
-	}
-	sessMu.Lock()
-	defer sessMu.Unlock()
-	exp, ok := sessions[c.Value]
-	return ok && time.Now().Before(exp)
+	return !authRequired() || sessionUser(r) != ""
 }
 
 func writeJSONResp(w http.ResponseWriter, v any) {
@@ -107,7 +138,9 @@ func routes() http.Handler {
 	m.Handle("GET /", http.FileServerFS(sub))
 
 	m.HandleFunc("GET /api/auth", func(w http.ResponseWriter, r *http.Request) {
-		writeJSONResp(w, map[string]bool{"required": cfg().PasswordHash != "", "ok": authed(r)})
+		s := cfg()
+		writeJSONResp(w, map[string]any{"required": authRequired(), "ok": authed(r), "user": sessionUser(r),
+			"password": s.PasswordHash != "", "sso": s.OIDCIssuer != ""})
 	})
 	m.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
 		if !jsonOnly(w, r) {
@@ -121,20 +154,11 @@ func routes() http.Handler {
 			fail(w, http.StatusUnauthorized, errors.New("wrong password"))
 			return
 		}
-		tok := make([]byte, 32)
-		rand.Read(tok)
-		t := hex.EncodeToString(tok)
-		sessMu.Lock()
-		for k, exp := range sessions {
-			if time.Now().After(exp) {
-				delete(sessions, k)
-			}
-		}
-		sessions[t] = time.Now().Add(30 * 24 * time.Hour)
-		sessMu.Unlock()
-		http.SetCookie(w, &http.Cookie{Name: "shrinkarr", Value: t, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 30 * 86400})
+		newSession(w, "admin")
 		writeJSONResp(w, map[string]bool{"ok": true})
 	})
+	m.HandleFunc("GET /api/oidc/login", oidcLogin)
+	m.HandleFunc("GET /api/oidc/callback", oidcCallback)
 	m.HandleFunc("POST /api/logout", func(w http.ResponseWriter, r *http.Request) {
 		if !jsonOnly(w, r) {
 			return
@@ -295,8 +319,8 @@ func routes() http.Handler {
 
 	m.HandleFunc("GET /api/settings", api(func(w http.ResponseWriter, r *http.Request) (any, error) {
 		s := cfg()
-		s.PasswordHash, s.PasswordSalt = "", ""
-		return map[string]any{"settings": s, "passwordSet": cfg().PasswordHash != ""}, nil
+		s.PasswordHash, s.PasswordSalt, s.OIDCSecret = "", "", ""
+		return map[string]any{"settings": s, "passwordSet": cfg().PasswordHash != "", "oidcSecretSet": cfg().OIDCSecret != "", "user": sessionUser(r)}, nil
 	}))
 	m.HandleFunc("POST /api/settings", api(func(w http.ResponseWriter, r *http.Request) (any, error) {
 		var s Settings
@@ -306,6 +330,15 @@ func routes() http.Handler {
 		old := cfg()
 		s.PasswordHash, s.PasswordSalt = old.PasswordHash, old.PasswordSalt
 		s.Paused = old.Paused // a settings form opened earlier must not undo Pause/Resume
+		if s.OIDCSecret == "" {
+			s.OIDCSecret = old.OIDCSecret
+		}
+		s.OIDCIssuer = strings.TrimRight(strings.TrimSpace(s.OIDCIssuer), "/")
+		if s.OIDCIssuer != "" && s.OIDCIssuer != old.OIDCIssuer {
+			if _, err := discover(s.OIDCIssuer); err != nil {
+				return nil, fmt.Errorf("SSO: %w", err)
+			}
+		}
 		if err := checkLibraries(s.Libraries); err != nil {
 			return nil, err
 		}
@@ -328,7 +361,7 @@ func routes() http.Handler {
 		if old.TestMode && !s.TestMode {
 			scanNow <- "" // re-check files that were only looked at in test mode
 		}
-		s.PasswordHash, s.PasswordSalt = "", ""
+		s.PasswordHash, s.PasswordSalt, s.OIDCSecret = "", "", ""
 		return s, nil
 	}))
 	m.HandleFunc("POST /api/password", api(func(w http.ResponseWriter, r *http.Request) (any, error) {

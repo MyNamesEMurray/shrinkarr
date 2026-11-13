@@ -43,6 +43,10 @@ type Settings struct {
 	DiscordURL    string    `json:"discordUrl"`
 	PasswordHash  string    `json:"passwordHash,omitempty"`
 	PasswordSalt  string    `json:"passwordSalt,omitempty"`
+	OIDCIssuer    string    `json:"oidcIssuer"`
+	OIDCClientID  string    `json:"oidcClientId"`
+	OIDCSecret    string    `json:"oidcSecret,omitempty"`
+	OIDCAllowed   string    `json:"oidcAllowed"` // comma-separated users, emails or groups; empty = anyone the provider lets in
 }
 
 var (

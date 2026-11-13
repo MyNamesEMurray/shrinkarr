@@ -61,6 +61,22 @@ Blocks after Run FFmpeg (like **Saved at least…**) look at the new file.
 Use **Test on a file** in the editor to see the path a file takes and the exact ffmpeg command.
 Nothing is changed.
 
+## Sign-in
+
+Off by default. Turn on either or both in Settings:
+
+- **Password:** one shared password.
+- **Single sign-on (OIDC):** Authentik, Authelia, Keycloak, Pocket ID or any OpenID Connect provider.
+  In Authentik: create an OAuth2/OpenID provider (confidential), set the redirect URI to
+  `https://<your shrinkarr address>/api/oidc/callback`, and create an application for it. Copy the
+  issuer URL, client ID and secret into Settings. Control who gets in by binding users or groups to
+  the application, or with Shrinkarr's "Allowed users or groups" list.
+
+Already using Authentik forward auth in your reverse proxy (Caddy, Traefik, NPM)? That works too,
+with Shrinkarr's own sign-in off.
+
+Locked out? Start the container with `SHRINKARR_DISABLE_AUTH=1`, fix Settings, then remove it.
+
 ## Files
 
 `/config` holds `settings.json`, `flows/`, `files.json` (latest state per file) and

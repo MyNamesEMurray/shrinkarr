@@ -22,4 +22,5 @@ Intel / AMD: set the GPU device to /dev/dri.</Overview>
   <Config Name="Temp" Target="/tmp" Default="/mnt/user/appdata/shrinkarr/tmp" Mode="rw" Description="Scratch space for quality test samples" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/shrinkarr/tmp</Config>
   <Config Name="Intel/AMD GPU" Target="" Default="" Mode="" Description="Set to /dev/dri for Intel QuickSync or AMD. Leave empty for NVIDIA or CPU." Type="Device" Display="always" Required="false" Mask="false"></Config>
   <Config Name="NVIDIA_VISIBLE_DEVICES" Target="NVIDIA_VISIBLE_DEVICES" Default="" Mode="" Description="NVIDIA only: 'all' or your GPU UUID. Needs --runtime=nvidia in Extra Parameters." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="SHRINKARR_DISABLE_AUTH" Target="SHRINKARR_DISABLE_AUTH" Default="" Mode="" Description="Locked out of SSO or password? Set to 1, fix Settings, then clear it." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
 </Container>

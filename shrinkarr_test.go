@@ -1,8 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -385,5 +389,80 @@ func TestArrListCached(t *testing.T) {
 	notifyArrs("/movies/New (2026)/New.mkv") // unknown: refetch once in case it was just added
 	if gets != 2 {
 		t.Fatalf("unknown path: %d fetches, want 2", gets)
+	}
+}
+
+// Full OIDC round trip against a fake provider: discovery, PKCE, token, userinfo, allow list, session.
+func TestOIDCLogin(t *testing.T) {
+	var challenge string
+	var idp *httptest.Server
+	idp = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/o/.well-known/openid-configuration":
+			fmt.Fprintf(w, `{"issuer":"%[1]s/o","authorization_endpoint":"%[1]s/authorize","token_endpoint":"%[1]s/token","userinfo_endpoint":"%[1]s/userinfo"}`, idp.URL)
+		case "/token":
+			r.ParseForm()
+			sum := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
+			if base64.RawURLEncoding.EncodeToString(sum[:]) != challenge || r.Form.Get("client_secret") != "sec" || r.Form.Get("code") != "c1" {
+				w.Write([]byte(`{"error":"invalid_grant"}`))
+				return
+			}
+			w.Write([]byte(`{"access_token":"at"}`))
+		case "/userinfo":
+			if r.Header.Get("Authorization") != "Bearer at" {
+				w.WriteHeader(401)
+				return
+			}
+			w.Write([]byte(`{"sub":"1","preferred_username":"eric","groups":["media-admins"]}`))
+		}
+	}))
+	defer idp.Close()
+	settings.OIDCIssuer, settings.OIDCClientID, settings.OIDCSecret = idp.URL+"/o", "shrinkarr", "sec"
+	defer func() { settings.OIDCIssuer, settings.OIDCAllowed = "", "" }()
+	h := routes()
+
+	login := func(allowed string) (*httptest.ResponseRecorder, string) {
+		settings.OIDCAllowed = allowed
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "http://sk.local/api/oidc/login", nil))
+		loc, _ := url.Parse(rec.Header().Get("Location"))
+		q := loc.Query()
+		challenge = q.Get("code_challenge")
+		if q.Get("redirect_uri") != "http://sk.local/api/oidc/callback" || q.Get("code_challenge_method") != "S256" {
+			t.Fatalf("auth redirect %s", loc)
+		}
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/oidc/callback?code=c1&state="+q.Get("state"), nil))
+		return rec, q.Get("state")
+	}
+
+	// Not logged in: API is locked.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/status", nil))
+	if rec.Code != 401 {
+		t.Fatalf("status without login: %d", rec.Code)
+	}
+
+	rec, state := login("someone-else, media-admins")
+	if rec.Code != http.StatusFound || len(rec.Result().Cookies()) == 0 {
+		t.Fatalf("callback: %d %s", rec.Code, rec.Body)
+	}
+	req := httptest.NewRequest("GET", "/api/status", nil)
+	req.AddCookie(rec.Result().Cookies()[0])
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req)
+	if rec2.Code != 200 || sessionUser(req) != "eric" {
+		t.Fatalf("after login: %d user %q", rec2.Code, sessionUser(req))
+	}
+
+	// The same state can't be replayed.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/oidc/callback?code=c1&state="+state, nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("replayed state: %d", rec.Code)
+	}
+
+	if rec, _ := login("bob"); rec.Code != http.StatusForbidden {
+		t.Fatalf("user not on allow list got %d", rec.Code)
 	}
 }
