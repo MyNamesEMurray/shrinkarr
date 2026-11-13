@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -56,26 +57,63 @@ func notifyArrs(path string) string {
 	}
 	var msgs []string
 	for _, a := range s.Arrs {
-		list, cmd, idField := arrKind(a)
-		var items []struct {
-			ID   int    `json:"id"`
-			Path string `json:"path"`
+		_, cmd, idField := arrKind(a)
+		id, fresh, err := arrOwner(a, p, false)
+		if err == nil && id == 0 && !fresh {
+			id, _, err = arrOwner(a, p, true) // maybe added since the list was cached
 		}
-		if err := arrCall(a, "GET", list, nil, &items); err != nil {
+		switch {
+		case err != nil:
 			msgs = append(msgs, fmt.Sprintf("%s: %v", a.Kind, err))
-			continue
-		}
-		for _, it := range items {
-			if it.Path != "" && strings.HasPrefix(p, strings.TrimRight(it.Path, "/")+"/") {
-				if err := arrCall(a, "POST", "/api/v3/command", map[string]any{"name": cmd, idField: it.ID}, nil); err != nil {
-					return fmt.Sprintf("%s: %v", a.Kind, err)
-				}
-				return fmt.Sprintf("%s: %s id %d", a.Kind, cmd, it.ID)
+		case id == 0:
+			msgs = append(msgs, fmt.Sprintf("%s: no item owns %s", a.Kind, p))
+		default:
+			if err := arrCall(a, "POST", "/api/v3/command", map[string]any{"name": cmd, idField: id}, nil); err != nil {
+				return fmt.Sprintf("%s: %v", a.Kind, err)
 			}
+			return fmt.Sprintf("%s: %s id %d", a.Kind, cmd, id)
 		}
-		msgs = append(msgs, fmt.Sprintf("%s: no item owns %s", a.Kind, p))
 	}
 	return strings.Join(msgs, "; ")
+}
+
+type arrItem struct {
+	ID   int    `json:"id"`
+	Path string `json:"path"`
+}
+
+var (
+	arrMu    sync.Mutex
+	arrCache = map[string]struct {
+		items []arrItem
+		at    time.Time
+	}{}
+)
+
+// arrOwner returns the id of the movie/series whose folder holds path, or 0,
+// and whether the list was just fetched. The list is cached for 10 minutes: it can be several MB.
+func arrOwner(a ArrConf, path string, refresh bool) (id int, fresh bool, err error) {
+	key := a.Kind + "|" + a.URL
+	arrMu.Lock()
+	c, ok := arrCache[key]
+	arrMu.Unlock()
+	if refresh || !ok || time.Since(c.at) > 10*time.Minute {
+		list, _, _ := arrKind(a)
+		var items []arrItem
+		if err := arrCall(a, "GET", list, nil, &items); err != nil {
+			return 0, false, err
+		}
+		c.items, c.at, fresh = items, time.Now(), true
+		arrMu.Lock()
+		arrCache[key] = c
+		arrMu.Unlock()
+	}
+	for _, it := range c.items {
+		if it.Path != "" && strings.HasPrefix(path, strings.TrimRight(it.Path, "/")+"/") {
+			return it.ID, fresh, nil
+		}
+	}
+	return 0, fresh, nil
 }
 
 // testArr checks URL and API key for the Settings page.

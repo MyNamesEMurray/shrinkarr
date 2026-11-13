@@ -36,6 +36,8 @@ docker run -d --name shrinkarr \
 ```
 
 For Intel or AMD, replace the `--runtime=nvidia …` line with `--device /dev/dri`.
+Add `-e TZ=America/Detroit` (your zone) so quiet hours and daily stats use local time.
+Unraid sets `TZ` for you.
 
 ## Templates
 

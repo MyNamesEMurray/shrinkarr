@@ -33,8 +33,8 @@ function esc(s) {
 async function call(method, path, body) {
   const r = await fetch('/api' + path, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
+    headers: method === 'GET' ? {} : { 'Content-Type': 'application/json' },
+    body: method === 'GET' ? undefined : JSON.stringify(body || {}),
   });
   if (r.status === 401 && path !== '/login') { showLogin(); throw new Error('Please log in'); }
   const j = await r.json().catch(() => ({}));
@@ -184,6 +184,7 @@ async function setSetting(patch) {
   const r = await get('/settings');
   await post('/settings', { ...r.settings, ...patch });
   refreshBanners();
+  if (location.hash.startsWith('#/settings')) route(); // reload the form so it isn't stale
 }
 
 // ---------- record details ----------

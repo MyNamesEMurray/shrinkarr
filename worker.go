@@ -165,22 +165,27 @@ func dispatcher() {
 		}
 		path := queue[0]
 		queue = queue[1:]
+		lib, ok := libraryFor(path)
+		_, statErr := os.Stat(path)
+		var flow *Flow
+		if ok {
+			flow = getFlow(lib.FlowID)
+		}
+		var j *Job
+		if statErr == nil && ok && lib.Enabled && flow != nil {
+			j = newJob(path, lib, flow, s.TestMode)
+			running[j.ID] = j
+		}
 		qMu.Unlock()
 
-		lib, ok := libraryFor(path)
-		if _, err := os.Stat(path); err != nil || !ok || !lib.Enabled {
+		switch {
+		case statErr != nil || !ok || !lib.Enabled:
 			dropFile(path)
 			continue
-		}
-		flow := getFlow(lib.FlowID)
-		if flow == nil {
+		case flow == nil:
 			setFile(path, lib.ID, "failed", "library has no flow; pick one on the Libraries page")
 			continue
 		}
-		j := newJob(path, lib, flow, s.TestMode)
-		qMu.Lock()
-		running[j.ID] = j
-		qMu.Unlock()
 		setFile(path, lib.ID, "running", "")
 		go func() {
 			r := j.execute()
@@ -247,9 +252,14 @@ func (j *Job) execute() Record {
 	return r
 }
 
+// failStreak counts failures in a row. A dead GPU fails every file, so stop early.
+var failStreak int
+
+const maxFailStreak = 5
+
 func finish(j *Job, r Record) {
 	addRecord(r)
-	detail := r.Detail
+	status, detail := r.Status, r.Detail
 	if r.Status == "done" {
 		detail = fmt.Sprintf("%s → %s. %s", human(r.OrigSize), human(r.NewSize), r.Detail)
 	}
@@ -260,13 +270,37 @@ func finish(j *Job, r Record) {
 	if j.Replaced {
 		path = j.Final
 	}
-	setFile(path, j.Lib.ID, r.Status, detail)
+	storeMu.Lock()
+	ignored := files[j.Path] != nil && files[j.Path].Status == "ignored"
+	storeMu.Unlock()
+	if ignored && !j.Replaced {
+		status, detail = "ignored", "ignored by you"
+	}
+	setFile(path, j.Lib.ID, status, detail)
 	storeMu.Lock()
 	if f := files[path]; f != nil {
 		f.JobID, f.Test = r.ID, j.TestMode
 	}
 	storeMu.Unlock()
-	if r.Status == "failed" {
+
+	qMu.Lock()
+	switch {
+	case r.Status != "failed":
+		failStreak = 0
+	case r.Detail != "cancelled":
+		failStreak++
+	}
+	streak := failStreak
+	qMu.Unlock()
+	switch {
+	case streak == maxFailStreak:
+		s := cfg()
+		s.Paused = true
+		saveSettings(s)
+		discord(fmt.Sprintf("Shrinkarr paused after %d failures in a row. Last: %s: %s. Check the GPU and the Failed tab, then press Resume.",
+			streak, filepath.Base(j.Path), tail(r.Detail, 300)))
+		log.Printf("paused after %d failures in a row", streak)
+	case streak > 0 && streak < maxFailStreak:
 		discord(fmt.Sprintf("Shrinkarr failed on %s: %s", filepath.Base(j.Path), tail(r.Detail, 300)))
 	}
 	log.Printf("%s %s: %s", r.Status, j.Path, r.Detail)

@@ -149,7 +149,7 @@ func addRecord(r Record) {
 	storeMu.Unlock()
 }
 
-func fileList(status, lib string, limit int) []FileState {
+func fileList(status, lib string) []FileState {
 	storeMu.Lock()
 	var out []FileState
 	for _, f := range files {
@@ -159,9 +159,6 @@ func fileList(status, lib string, limit int) []FileState {
 	}
 	storeMu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
 	return out
 }
 

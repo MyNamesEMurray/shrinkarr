@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -66,8 +67,24 @@ func readBody(r *http.Request, v any) error {
 
 type handler func(w http.ResponseWriter, r *http.Request) (any, error)
 
+// jsonOnly blocks cross-site "simple" POSTs: a page on another site can't send
+// application/json without a CORS preflight, and this server never approves one.
+func jsonOnly(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return true
+	}
+	if mt, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";"); strings.TrimSpace(mt) != "application/json" {
+		fail(w, http.StatusUnsupportedMediaType, errors.New("send JSON with Content-Type: application/json"))
+		return false
+	}
+	return true
+}
+
 func api(h handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !jsonOnly(w, r) {
+			return
+		}
 		if !authed(r) {
 			fail(w, http.StatusUnauthorized, errors.New("login required"))
 			return
@@ -93,6 +110,9 @@ func routes() http.Handler {
 		writeJSONResp(w, map[string]bool{"required": cfg().PasswordHash != "", "ok": authed(r)})
 	})
 	m.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
+		if !jsonOnly(w, r) {
+			return
+		}
 		var b struct{ Password string }
 		readBody(r, &b)
 		s := cfg()
@@ -105,12 +125,20 @@ func routes() http.Handler {
 		rand.Read(tok)
 		t := hex.EncodeToString(tok)
 		sessMu.Lock()
+		for k, exp := range sessions {
+			if time.Now().After(exp) {
+				delete(sessions, k)
+			}
+		}
 		sessions[t] = time.Now().Add(30 * 24 * time.Hour)
 		sessMu.Unlock()
 		http.SetCookie(w, &http.Cookie{Name: "shrinkarr", Value: t, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 30 * 86400})
 		writeJSONResp(w, map[string]bool{"ok": true})
 	})
 	m.HandleFunc("POST /api/logout", func(w http.ResponseWriter, r *http.Request) {
+		if !jsonOnly(w, r) {
+			return
+		}
 		if c, err := r.Cookie("shrinkarr"); err == nil {
 			sessMu.Lock()
 			delete(sessions, c.Value)
@@ -140,7 +168,7 @@ func routes() http.Handler {
 	m.HandleFunc("GET /api/files", api(func(w http.ResponseWriter, r *http.Request) (any, error) {
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))
-		list := fileList(q.Get("status"), q.Get("library"), 0)
+		list := fileList(q.Get("status"), q.Get("library"))
 		if s := strings.ToLower(q.Get("q")); s != "" {
 			list = slices.DeleteFunc(list, func(f FileState) bool { return !strings.Contains(strings.ToLower(f.Path), s) })
 		}
@@ -169,7 +197,7 @@ func routes() http.Handler {
 			return nil, err
 		}
 		if len(b.Paths) == 0 && b.Status != "" {
-			for _, f := range fileList(b.Status, "", 0) {
+			for _, f := range fileList(b.Status, "") {
 				b.Paths = append(b.Paths, f.Path)
 			}
 		}
@@ -189,7 +217,7 @@ func routes() http.Handler {
 				enqueue(p, lib.ID, false)
 			case "dequeue":
 				unqueue(p)
-				dropFile(p)
+				setFile(p, lib.ID, "skipped", "removed from queue")
 			default:
 				return nil, errors.New("unknown action")
 			}
@@ -277,6 +305,10 @@ func routes() http.Handler {
 		}
 		old := cfg()
 		s.PasswordHash, s.PasswordSalt = old.PasswordHash, old.PasswordSalt
+		s.Paused = old.Paused // a settings form opened earlier must not undo Pause/Resume
+		if err := checkLibraries(s.Libraries); err != nil {
+			return nil, err
+		}
 		for _, l := range s.Libraries {
 			if fi, err := os.Stat(l.Path); err != nil || !fi.IsDir() {
 				return nil, errors.New("folder not found: " + l.Path)
@@ -334,6 +366,11 @@ func routes() http.Handler {
 		}
 		s := cfg()
 		s.Paused = b.Paused
+		if !b.Paused {
+			qMu.Lock()
+			failStreak = 0
+			qMu.Unlock()
+		}
 		return nil, saveSettings(s)
 	}))
 	m.HandleFunc("GET /api/browse", api(func(w http.ResponseWriter, r *http.Request) (any, error) {
@@ -387,4 +424,17 @@ func routes() http.Handler {
 		return nil, err
 	}))
 	return m
+}
+
+// checkLibraries rejects a folder inside another library: both would claim the same files.
+func checkLibraries(libs []Library) error {
+	for i, a := range libs {
+		for _, b := range libs[i+1:] {
+			pa, pb := filepath.Clean(a.Path)+"/", filepath.Clean(b.Path)+"/"
+			if strings.HasPrefix(pa, pb) || strings.HasPrefix(pb, pa) {
+				return fmt.Errorf("libraries %q and %q overlap; one folder is inside the other", a.Name, b.Name)
+			}
+		}
+	}
+	return nil
 }

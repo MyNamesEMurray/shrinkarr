@@ -200,6 +200,10 @@ func init() {
 	register(&NodeDef{Type: "notify_arr", Label: "Tell Radarr/Sonarr", Category: "finish",
 		Help: "Asks Radarr/Sonarr (set up on the Settings page) to rescan this movie or show.", Outputs: []string{"Next"},
 		Run: func(j *Job, p Params) (int, error) {
+			if j.TestMode {
+				j.logf("test mode: would ask Radarr/Sonarr to rescan")
+				return 1, nil
+			}
 			path := j.Path
 			if j.Final != "" {
 				path = j.Final
@@ -210,6 +214,10 @@ func init() {
 	register(&NodeDef{Type: "notify_discord", Label: "Send Discord message", Category: "finish",
 		Help: "Posts to the Discord webhook from the Settings page.", Outputs: []string{"Next"},
 		Run: func(j *Job, p Params) (int, error) {
+			if j.TestMode {
+				j.logf("test mode: would send Discord message: %s", j.summary())
+				return 1, nil
+			}
 			if err := discord(j.summary()); err != nil {
 				j.logf("discord: %v", err)
 			}

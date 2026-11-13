@@ -24,7 +24,6 @@ type Stream struct {
 		Language string `json:"language"`
 	} `json:"tags"`
 	Disposition struct {
-		Default     int `json:"default"`
 		AttachedPic int `json:"attached_pic"`
 	} `json:"disposition"`
 	SideData []struct {
@@ -36,7 +35,6 @@ type Probe struct {
 	Format struct {
 		FormatName string `json:"format_name"`
 		Duration   string `json:"duration"`
-		Size       string `json:"size"`
 		BitRate    string `json:"bit_rate"`
 	} `json:"format"`
 	Streams []Stream `json:"streams"`

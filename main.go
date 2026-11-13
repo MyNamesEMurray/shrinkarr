@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	_ "time/tzdata" // TZ works even if the image has no zoneinfo
 )
 
 //go:embed templates/*.json

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -220,4 +222,168 @@ func TestE2E(t *testing.T) {
 			t.Fatal("original not moved:", err)
 		}
 	})
+}
+
+func resetState(t *testing.T) {
+	t.Helper()
+	storeMu.Lock()
+	files = map[string]*FileState{}
+	storeMu.Unlock()
+	qMu.Lock()
+	queue, running, failStreak = nil, map[string]*Job{}, 0
+	qMu.Unlock()
+}
+
+// The scan rule decides what gets (re)processed; a mistake re-encodes or skips a whole library.
+func TestScanRules(t *testing.T) {
+	resetState(t)
+	dir := t.TempDir()
+	old := time.Now().Add(-time.Hour)
+	mk := func(name string, age time.Time) string {
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, []byte(name), 0o644)
+		os.Chtimes(p, age, age)
+		return p
+	}
+	known := func(p, status string, test bool) {
+		fi, _ := os.Stat(p)
+		files[p] = &FileState{Path: p, Size: fi.Size(), Mtime: fi.ModTime().Unix(), Status: status, Test: test}
+	}
+	unchanged := mk("unchanged.mkv", old)
+	known(unchanged, "done", false)
+	changed := mk("changed.mkv", old)
+	known(changed, "done", false)
+	files[changed].Size = 1
+	ignored := mk("ignored.mkv", old)
+	known(ignored, "ignored", false)
+	tested := mk("tested.mkv", old)
+	known(tested, "skipped", true)
+	removed := mk("removed.mkv", old)
+	known(removed, "skipped", false) // what "Clear queue" leaves behind
+	fresh := mk("copying.mkv", time.Now())
+	newFile := mk("new.mkv", old)
+	mk("notes.txt", old)
+
+	settings.MinAgeMinutes, settings.TestMode = 10, false
+	scanLibrary(Library{ID: "l", Name: "t", Path: dir})
+	got := map[string]bool{}
+	for _, p := range queue {
+		got[p] = true
+	}
+	want := map[string]bool{changed: true, tested: true, newFile: true}
+	for _, p := range []string{unchanged, changed, ignored, tested, removed, fresh, newFile} {
+		if got[p] != want[p] {
+			t.Errorf("%s queued=%v, want %v", filepath.Base(p), got[p], want[p])
+		}
+	}
+	if len(queue) != 3 {
+		t.Errorf("queue %v", queue)
+	}
+
+	// With test mode on, a test-mode result counts as known.
+	resetState(t)
+	known(tested, "skipped", true)
+	settings.TestMode = true
+	scanLibrary(Library{ID: "l", Name: "t", Path: dir})
+	for _, p := range queue {
+		if p == tested {
+			t.Error("test-mode result requeued while test mode is still on")
+		}
+	}
+	settings.TestMode = false
+}
+
+func TestCSRFBlocked(t *testing.T) {
+	h := routes()
+	for _, ct := range []string{"text/plain", "application/x-www-form-urlencoded", ""} {
+		req := httptest.NewRequest("POST", "/api/pause", strings.NewReader(`{"paused":true}`))
+		if ct != "" {
+			req.Header.Set("Content-Type", ct)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnsupportedMediaType {
+			t.Errorf("%q: got %d, want 415", ct, rec.Code)
+		}
+	}
+	req := httptest.NewRequest("POST", "/api/pause", strings.NewReader(`{"paused":false}`))
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Errorf("json request: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestFailStreakPauses(t *testing.T) {
+	resetState(t)
+	settings.Paused = false
+	j := &Job{Path: "/x.mkv", Lib: Library{ID: "l"}}
+	fail := func(detail string) { finish(j, Record{ID: randID(), Path: j.Path, Status: "failed", Detail: detail}) }
+	for i := 0; i < 10; i++ {
+		fail("cancelled") // cancels are the user's doing, not a broken setup
+	}
+	if cfg().Paused {
+		t.Fatal("paused by cancels")
+	}
+	for i := 0; i < maxFailStreak-1; i++ {
+		fail("ffmpeg failed")
+	}
+	finish(j, Record{ID: randID(), Path: j.Path, Status: "done"})
+	for i := 0; i < maxFailStreak-1; i++ {
+		fail("ffmpeg failed")
+	}
+	if cfg().Paused {
+		t.Fatal("a success in between should reset the count")
+	}
+	fail("ffmpeg failed")
+	if !cfg().Paused {
+		t.Fatal("not paused after 5 failures in a row")
+	}
+	settings.Paused = false
+}
+
+func TestIgnoreWhileRunning(t *testing.T) {
+	resetState(t)
+	p := filepath.Join(t.TempDir(), "a.mkv")
+	os.WriteFile(p, []byte("x"), 0o644)
+	setFile(p, "l", "ignored", "ignored by you")
+	finish(&Job{Path: p, Lib: Library{ID: "l"}}, Record{ID: "r", Path: p, Status: "skipped", Detail: "nothing to do"})
+	if files[p].Status != "ignored" {
+		t.Fatalf("status %s", files[p].Status)
+	}
+}
+
+func TestOverlappingLibraries(t *testing.T) {
+	if checkLibraries([]Library{{Name: "a", Path: "/media"}, {Name: "b", Path: "/media/tv"}}) == nil {
+		t.Fatal("nested libraries accepted")
+	}
+	if checkLibraries([]Library{{Name: "a", Path: "/media/tv"}, {Name: "b", Path: "/media/tv2"}}) != nil {
+		t.Fatal("/media/tv and /media/tv2 don't overlap")
+	}
+}
+
+func TestArrListCached(t *testing.T) {
+	gets := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			gets++
+			w.Write([]byte(`[{"id":7,"path":"/movies/Up (2009)"}]`))
+		}
+	}))
+	defer srv.Close()
+	settings.Arrs = []ArrConf{{Kind: "radarr", URL: srv.URL}}
+	defer func() { settings.Arrs = nil }()
+	for i := 0; i < 3; i++ {
+		if msg := notifyArrs("/movies/Up (2009)/Up.mkv"); !strings.Contains(msg, "id 7") {
+			t.Fatal(msg)
+		}
+	}
+	if gets != 1 {
+		t.Fatalf("list fetched %d times, want 1", gets)
+	}
+	notifyArrs("/movies/New (2026)/New.mkv") // unknown: refetch once in case it was just added
+	if gets != 2 {
+		t.Fatalf("unknown path: %d fetches, want 2", gets)
+	}
 }
