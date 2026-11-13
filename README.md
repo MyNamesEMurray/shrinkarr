@@ -31,6 +31,7 @@ docker run -d --name shrinkarr \
   -p 8265:8265 \
   -v /path/to/media:/media \
   -v /path/to/appdata/shrinkarr:/config \
+  -v /path/to/appdata/shrinkarr/tmp:/tmp \
   --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all \
   ghcr.io/mynamesemurray/shrinkarr:latest
 ```

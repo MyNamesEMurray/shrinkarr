@@ -107,7 +107,7 @@ func saveSettings(s Settings) error {
 			l.ID = randID()
 		}
 		if l.ScanMinutes <= 0 {
-			l.ScanMinutes = 30
+			l.ScanMinutes = 360 // a walk over the array can wake sleeping disks
 		}
 	}
 	settingsMu.Lock()

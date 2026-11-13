@@ -596,7 +596,7 @@ async function pageLibraries(app) {
     let close;
     close = openModal(h('form', { onsubmit: act(async e => {
         e.preventDefault();
-        l.scanMinutes = +l.scanMinutes || 30;
+        l.scanMinutes = +l.scanMinutes || 360;
         if (!l.name) l.name = base(l.path) || 'Library';
         if (isNew) s.libraries.push(l); else s.libraries[s.libraries.indexOf(lib)] = l;
         try { await post('/settings', s); } catch (err) { if (isNew) s.libraries.pop(); else s.libraries[s.libraries.indexOf(l)] = lib; throw err; }
@@ -611,14 +611,14 @@ async function pageLibraries(app) {
       h('label', { class: 'f' }, h('span', {}, 'Flow'), h('select', { onchange: e => { l.flowId = e.target.value; } },
         flows.map(f => h('option', { value: f.id, selected: f.id === l.flowId }, f.name + (f.builtIn ? '' : ' (yours)'))))),
       h('div', { class: 'form-grid' },
-        h('label', { class: 'f' }, h('span', {}, 'Look for new files every (minutes)'), h('input', { type: 'number', min: 1, value: l.scanMinutes || 30, oninput: e => { l.scanMinutes = e.target.value; } }))),
+        h('label', { class: 'f' }, h('span', {}, 'Look for new files every (minutes)'), h('input', { type: 'number', min: 1, value: l.scanMinutes || 360, oninput: e => { l.scanMinutes = e.target.value; } }))),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: l.enabled, onchange: e => { l.enabled = e.target.checked; } }), 'Enabled'),
       h('div', { class: 'row' }, h('span', { class: 'spacer' }), h('button', { class: 'btn', type: 'button', onclick: () => close() }, 'Cancel'), h('button', { class: 'btn primary', type: 'submit' }, 'Save'))));
   }
 
   app.append(
     h('div', { class: 'row' }, h('h1', { style: 'margin:0' }, 'Libraries'), h('span', { class: 'spacer' }),
-      h('button', { class: 'btn primary', onclick: () => edit({ name: '', path: '', flowId: flows[0].id, enabled: true, scanMinutes: 30 }, true) }, 'Add library')),
+      h('button', { class: 'btn primary', onclick: () => edit({ name: '', path: '', flowId: flows[0].id, enabled: true, scanMinutes: 360 }, true) }, 'Add library')),
     h('p', { class: 'muted' }, 'A library is a folder of videos and the flow used on it.'),
     s.libraries.length ? h('div', { class: 'grid cards' }, s.libraries.map(l => h('div', { class: 'card' },
       h('div', { class: 'row' }, h('h3', { style: 'margin:0;flex:1' }, l.name), l.enabled ? null : h('span', { class: 'pill' }, 'disabled')),
@@ -629,7 +629,7 @@ async function pageLibraries(app) {
         h('button', { class: 'btn sm', onclick: act(async () => { await post('/scan', { library: l.id }); toast('Scanning ' + l.name); }) }, 'Scan now'),
         h('button', { class: 'btn sm', onclick: () => edit(l, false) }, 'Edit'),
         h('button', { class: 'btn sm danger', onclick: act(async () => { if (!confirm(`Remove library "${l.name}"? Files are not touched.`)) return; s.libraries = s.libraries.filter(x => x !== l); await saveAll(); }) }, 'Remove')))))
-      : h('div', { class: 'card' }, h('p', {}, 'No libraries yet.'), h('button', { class: 'btn primary', onclick: () => edit({ name: '', path: '', flowId: flows[0].id, enabled: true, scanMinutes: 30 }, true) }, 'Add your first library')));
+      : h('div', { class: 'card' }, h('p', {}, 'No libraries yet.'), h('button', { class: 'btn primary', onclick: () => edit({ name: '', path: '', flowId: flows[0].id, enabled: true, scanMinutes: 360 }, true) }, 'Add your first library')));
 }
 
 // ---------- stats ----------
@@ -820,6 +820,7 @@ async function pageSettings(app) {
         field('Client ID', bind('oidcClientId')),
         field('Client secret', bind('oidcSecret', 'password', { autocomplete: 'off', placeholder: st.oidcSecretSet ? 'saved (leave empty to keep)' : '' })),
         field('Allowed users or groups', bind('oidcAllowed', 'text', { placeholder: 'empty = anyone the provider lets in' }), 'Comma separated usernames, emails or group names.')),
+      !s.oidcAllowed ? h('p', { class: 'small', style: 'color:var(--warn)' }, '⚠ With this list empty, anyone who can sign in to your provider gets in. In Authentik an application with no users or groups bound is open to every user. Bind a group to the application, or fill in the list above.') : null,
       h('p', { class: 'small muted' }, 'Redirect URI to register: ', h('code', {}, location.origin + '/api/oidc/callback')),
       h('p', { class: 'small muted' }, 'Locked out? Start the container with SHRINKARR_DISABLE_AUTH=1, fix the settings, then remove it.'),
       h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, 'Save SSO'),
@@ -885,7 +886,7 @@ async function wizard() {
 
   async function finish() {
     const s = st.settings;
-    s.libraries = [...s.libraries.filter(l => l.path !== pick.path), { name: pick.name, path: pick.path, flowId: pick.flowId, enabled: true, scanMinutes: 30 }];
+    s.libraries = [...s.libraries.filter(l => l.path !== pick.path), { name: pick.name, path: pick.path, flowId: pick.flowId, enabled: true, scanMinutes: 360 }];
     s.testMode = pick.test;
     s.setupDone = true;
     await post('/settings', s);

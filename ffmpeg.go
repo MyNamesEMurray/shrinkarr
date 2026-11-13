@@ -453,25 +453,36 @@ func replaceNode(j *Job, p Params) (int, error) {
 		if err != nil || strings.HasPrefix(rel, "..") {
 			rel = filepath.Base(j.Path)
 		}
-		dest := filepath.Join(p.S("folder"), rel)
+		folder := p.S("folder")
+		if folder == "" {
+			folder = filepath.Join(j.Lib.Path, ".shrinkarr-originals")
+		}
+		dest := filepath.Join(folder, rel)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return 0, err
 		}
 		if err := moveFile(j.Path, dest); err != nil {
 			return 0, fmt.Errorf("moving original: %w", err)
 		}
-		j.logf("original moved to %s", dest)
-	}
-	if err := os.Rename(j.Cur, final); err != nil {
-		return 0, err
-	}
-	if final != j.Path && p.S("original") != "move" {
-		if err := os.Remove(j.Path); err != nil {
+		if err := os.Rename(j.Cur, final); err != nil {
+			if back := moveFile(dest, j.Path); back != nil {
+				return 0, fmt.Errorf("%w; the original is still at %s", err, dest)
+			}
 			return 0, err
 		}
+		j.logf("original moved to %s", dest)
+	} else if err := os.Rename(j.Cur, final); err != nil {
+		return 0, err
 	}
 	j.temps = slices.DeleteFunc(j.temps, func(t string) bool { return t == j.Cur })
 	j.Final, j.Cur, j.Replaced = final, final, true
+	// The new file is in place now; failing to delete the old one must not mark the job failed.
+	if final != j.Path && p.S("original") != "move" {
+		if err := os.Remove(j.Path); err != nil {
+			j.logf("could not delete the original %s: %v", j.Path, err)
+			j.notes = append(j.notes, "original not deleted")
+		}
+	}
 	return 1, nil
 }
 

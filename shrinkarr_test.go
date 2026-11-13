@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +20,9 @@ import (
 func TestMain(m *testing.M) {
 	configDir, _ = os.MkdirTemp("", "shrinkarr-cfg-")
 	loadTemplates()
+	if err := loadStore(); err != nil {
+		panic(err)
+	}
 	if _, err := exec.LookPath("ffmpeg"); err == nil {
 		detectHardware()
 	}
@@ -209,12 +214,12 @@ func TestE2E(t *testing.T) {
 
 	t.Run("move original", func(t *testing.T) {
 		src := fixture(t, dir, "e.mkv", "mpeg4", "aac")
-		keep := filepath.Join(t.TempDir(), "orig")
+		keep := filepath.Join(dir, ".shrinkarr-originals") // default: hidden folder in the library, same disk
 		f := *getFlow("tpl-space")
 		f.Nodes = append([]Node(nil), f.Nodes...)
 		for i := range f.Nodes {
 			if f.Nodes[i].Type == "replace" {
-				f.Nodes[i].Params = map[string]any{"original": "move", "folder": keep}
+				f.Nodes[i].Params = map[string]any{"original": "move"}
 			}
 		}
 		settings.TempDir = t.TempDir()
@@ -464,5 +469,66 @@ func TestOIDCLogin(t *testing.T) {
 
 	if rec, _ := login("bob"); rec.Code != http.StatusForbidden {
 		t.Fatalf("user not on allow list got %d", rec.Code)
+	}
+
+	// A flood of unfinished sign-ins is capped.
+	oidcMu.Lock()
+	for i := 0; i < 1000; i++ {
+		oidcPending[fmt.Sprint(i)] = pendingLogin{at: time.Now()}
+	}
+	oidcMu.Unlock()
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/oidc/login", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("pending cap: %d", rec.Code)
+	}
+	oidcMu.Lock()
+	clear(oidcPending)
+	oidcMu.Unlock()
+}
+
+// If the new file can't be put in place, a moved original goes back where it was.
+func TestReplaceRollsBack(t *testing.T) {
+	lib := t.TempDir()
+	orig := filepath.Join(lib, "m.mkv")
+	os.WriteFile(orig, []byte("original"), 0o644)
+	j := &Job{Path: orig, Cur: filepath.Join(lib, ".shrinkarr-gone.mp4"), Lib: Library{Path: lib}}
+	if _, err := replaceNode(j, Params{"original": "move", "folder": ""}); err == nil {
+		t.Fatal("expected an error: the new file doesn't exist")
+	}
+	if b, err := os.ReadFile(orig); err != nil || string(b) != "original" {
+		t.Fatalf("original not restored: %v", err)
+	}
+	if j.Replaced {
+		t.Fatal("marked replaced")
+	}
+}
+
+// Logs live only on disk; the details popup still gets them.
+func TestRecordLogFromDisk(t *testing.T) {
+	addRecord(Record{ID: "rec-log", Status: "done", Log: "the log", Commands: []string{"ffmpeg -i x"}})
+	storeMu.Lock()
+	mem := history[len(history)-1]
+	storeMu.Unlock()
+	if mem.Log != "" || mem.Commands != nil {
+		t.Fatal("log kept in memory")
+	}
+	r, ok := findRecord("rec-log")
+	if !ok || r.Log != "the log" || len(r.Commands) != 1 {
+		t.Fatalf("got %+v %v", r, ok)
+	}
+}
+
+func TestSSONeedsClient(t *testing.T) {
+	body, _ := json.Marshal(Settings{OIDCIssuer: "https://auth.example.com/application/o/x", Workers: 1})
+	req := httptest.NewRequest("POST", "/api/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	routes().ServeHTTP(rec, req)
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "client ID") {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if cfg().OIDCIssuer != "" {
+		t.Fatal("SSO saved without a client")
 	}
 }

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"slices"
@@ -83,11 +85,7 @@ func oidcError(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
 	fmt.Fprintf(w, `<!doctype html><meta name=viewport content="width=device-width"><body style="font:16px system-ui;padding:2em">
-<h2>Sign-in failed</h2><p>%s</p><p><a href="/">Back to Shrinkarr</a></p>`, htmlEscape(msg))
-}
-
-func htmlEscape(s string) string {
-	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;").Replace(s)
+<h2>Sign-in failed</h2><p>%s</p><p><a href="/">Back to Shrinkarr</a></p>`, html.EscapeString(msg))
 }
 
 func oidcLogin(w http.ResponseWriter, r *http.Request) {
@@ -109,8 +107,15 @@ func oidcLogin(w http.ResponseWriter, r *http.Request) {
 			delete(oidcPending, k)
 		}
 	}
-	oidcPending[state] = pendingLogin{verifier: verifier, redirect: ru, at: time.Now()}
+	full := len(oidcPending) >= 1000 // unauthenticated endpoint: don't let a loop grow memory
+	if !full {
+		oidcPending[state] = pendingLogin{verifier: verifier, redirect: ru, at: time.Now()}
+	}
 	oidcMu.Unlock()
+	if full {
+		oidcError(w, "Too many sign-ins in progress. Wait a few minutes and try again.")
+		return
+	}
 	sum := sha256.Sum256([]byte(verifier))
 	q := url.Values{
 		"response_type":         {"code"},
@@ -210,18 +215,9 @@ func oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !u.allowed(s.OIDCAllowed) {
-		oidcError(w, fmt.Sprintf("%s isn't on Shrinkarr's allowed list.", firstNonEmpty(u.Username, u.Email, u.Sub)))
+		oidcError(w, fmt.Sprintf("%s isn't on Shrinkarr's allowed list.", cmp.Or(u.Username, u.Email, u.Sub)))
 		return
 	}
-	newSession(w, firstNonEmpty(u.Username, u.Email, u.Sub))
+	newSession(w, cmp.Or(u.Username, u.Email, u.Sub))
 	http.Redirect(w, r, "/", http.StatusFound)
-}
-
-func firstNonEmpty(s ...string) string {
-	for _, v := range s {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }

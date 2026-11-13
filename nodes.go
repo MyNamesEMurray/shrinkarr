@@ -184,10 +184,11 @@ func init() {
 
 	// --- finish ---
 	register(&NodeDef{Type: "replace", Label: "Replace original", Category: "finish",
-		Help: "Swaps the new file in. \"move\" keeps the original in a folder you choose instead of deleting it.", Outputs: []string{"Next"},
+		Help: "Swaps the new file in. \"move\" keeps the original instead of deleting it.", Outputs: []string{"Next"},
 		Params: []Param{
 			{Key: "original", Label: "Original file", Kind: "select", Options: []string{"delete", "move"}, Default: "delete"},
-			{Key: "folder", Label: "Move originals to", Kind: "text", Default: "/config/originals"},
+			{Key: "folder", Label: "Move originals to", Kind: "text", Default: "",
+				Help: "Empty = a hidden .shrinkarr-originals folder in the library: same disk, so moving is instant. Plex and scans skip it."},
 		},
 		Run: replaceNode})
 	register(&NodeDef{Type: "keep_original", Label: "Keep original", Category: "finish",

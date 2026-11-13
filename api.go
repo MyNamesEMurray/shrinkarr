@@ -32,6 +32,7 @@ type session struct {
 
 var (
 	sessMu   sync.Mutex
+	loginMu  sync.Mutex
 	sessions = map[string]session{}
 	// Escape hatch if SSO is misconfigured and you're locked out.
 	authDisabled = os.Getenv("SHRINKARR_DISABLE_AUTH") == "1"
@@ -44,9 +45,7 @@ func authRequired() bool {
 
 // newSession logs the browser in for 30 days and drops expired sessions.
 func newSession(w http.ResponseWriter, user string) {
-	tok := make([]byte, 32)
-	rand.Read(tok)
-	t := hex.EncodeToString(tok)
+	t := randB64(32)
 	sessMu.Lock()
 	for k, s := range sessions {
 		if time.Now().After(s.exp) {
@@ -148,6 +147,8 @@ func routes() http.Handler {
 		}
 		var b struct{ Password string }
 		readBody(r, &b)
+		loginMu.Lock() // one guess at a time, so the 1s penalty can't be run in parallel
+		defer loginMu.Unlock()
 		s := cfg()
 		if s.PasswordHash == "" || subtle.ConstantTimeCompare([]byte(hashPassword(b.Password, s.PasswordSalt)), []byte(s.PasswordHash)) != 1 {
 			time.Sleep(time.Second) // slow down guessing
@@ -334,6 +335,9 @@ func routes() http.Handler {
 			s.OIDCSecret = old.OIDCSecret
 		}
 		s.OIDCIssuer = strings.TrimRight(strings.TrimSpace(s.OIDCIssuer), "/")
+		if s.OIDCIssuer != "" && (strings.TrimSpace(s.OIDCClientID) == "" || s.OIDCSecret == "") {
+			return nil, errors.New("SSO needs the client ID and client secret from your provider")
+		}
 		if s.OIDCIssuer != "" && s.OIDCIssuer != old.OIDCIssuer {
 			if _, err := discover(s.OIDCIssuer); err != nil {
 				return nil, fmt.Errorf("SSO: %w", err)

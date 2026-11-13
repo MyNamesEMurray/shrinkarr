@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -83,7 +85,7 @@ func loadStore() error {
 		for sc.Scan() {
 			var r Record
 			if json.Unmarshal(sc.Bytes(), &r) == nil {
-				history = append(history, r)
+				history = append(history, slim(r))
 			}
 		}
 		f.Close()
@@ -141,11 +143,19 @@ func dropFile(path string) {
 	storeMu.Unlock()
 }
 
+// slim drops the bulky fields kept only in history.jsonl; findRecord reads them back.
+func slim(r Record) Record {
+	r.Log, r.Commands = "", nil
+	return r
+}
+
 func addRecord(r Record) {
 	b, _ := json.Marshal(r)
 	storeMu.Lock()
-	history = append(history, r)
-	histFile.Write(append(b, '\n'))
+	history = append(history, slim(r))
+	if _, err := histFile.Write(append(b, '\n')); err != nil {
+		log.Printf("history.jsonl: %v (disk full?)", err)
+	}
 	storeMu.Unlock()
 }
 
@@ -246,21 +256,30 @@ func computeStats(days int) Stats {
 		done = done[:10]
 	}
 	for _, r := range done {
-		r.Log, r.Commands, r.Steps = "", nil, nil
+		r.Steps = nil
 		s.Top = append(s.Top, r)
 	}
 	return s
 }
 
+// findRecord returns one job with its log and commands, read from history.jsonl.
 func findRecord(id string) (Record, bool) {
-	storeMu.Lock()
-	defer storeMu.Unlock()
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].ID == id {
-			return history[i], true
+	var rec Record
+	found := false
+	f, err := os.Open(filepath.Join(configDir, "history.jsonl"))
+	if err != nil {
+		return rec, false
+	}
+	defer f.Close()
+	needle := []byte(`"id":"` + id + `"`)
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	for sc.Scan() {
+		if bytes.Contains(sc.Bytes(), needle) && json.Unmarshal(sc.Bytes(), &rec) == nil && rec.ID == id {
+			found = true // keep going: a later line with the same id wins
 		}
 	}
-	return Record{}, false
+	return rec, found
 }
 
 func recentRecords(limit int, status string) []Record {
@@ -269,9 +288,7 @@ func recentRecords(limit int, status string) []Record {
 	out := []Record{}
 	for i := len(history) - 1; i >= 0 && len(out) < limit; i-- {
 		if status == "" || history[i].Status == status {
-			r := history[i]
-			r.Log, r.Commands = "", nil
-			out = append(out, r)
+			out = append(out, history[i])
 		}
 	}
 	return out
