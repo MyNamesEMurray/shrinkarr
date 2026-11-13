@@ -1,0 +1,41 @@
+{
+  "id": "tpl-appletv",
+  "name": "Apple TV / Plex direct play (HEVC MP4)",
+  "description": "Everything becomes HEVC in MP4 with Apple-friendly audio, so Apple TV, iPhone and most smart TVs play it without Plex transcoding. Dolby Vision is reduced to HDR10. Files already in HEVC are only repackaged, never re-encoded.",
+  "nodes": [
+    {"id": "1", "type": "start"},
+    {"id": "2", "type": "check_codec", "params": {"codecs": "hevc"}},
+    {"id": "3", "type": "set_container", "params": {"container": "mp4"}},
+    {"id": "4", "type": "strip_dv"},
+    {"id": "5", "type": "audio_convert", "params": {"keep": "aac,ac3,eac3", "to": "eac3", "bitrate": "640k", "channels": "6"}},
+    {"id": "6", "type": "run_ffmpeg"},
+    {"id": "7", "type": "check_bitrate", "params": {"mbps": 3}},
+    {"id": "8", "type": "video_encode", "params": {"codec": "hevc", "mode": "auto", "vmaf": 95}},
+    {"id": "9", "type": "set_container", "params": {"container": "mp4"}},
+    {"id": "10", "type": "audio_convert", "params": {"keep": "aac,ac3,eac3", "to": "eac3", "bitrate": "640k", "channels": "6"}},
+    {"id": "11", "type": "run_ffmpeg"},
+    {"id": "12", "type": "check_saved", "params": {"percent": 10}},
+    {"id": "13", "type": "keep_original", "params": {"reason": "saved less than 10%"}},
+    {"id": "14", "type": "keep_original", "params": {"reason": "bitrate already low"}},
+    {"id": "15", "type": "replace", "params": {"original": "delete"}},
+    {"id": "16", "type": "notify_arr"}
+  ],
+  "edges": [
+    {"from": "1", "out": 1, "to": "2"},
+    {"from": "2", "out": 1, "to": "3"},
+    {"from": "3", "out": 1, "to": "4"},
+    {"from": "4", "out": 1, "to": "5"},
+    {"from": "5", "out": 1, "to": "6"},
+    {"from": "6", "out": 1, "to": "15"},
+    {"from": "2", "out": 2, "to": "7"},
+    {"from": "7", "out": 1, "to": "8"},
+    {"from": "7", "out": 2, "to": "14"},
+    {"from": "8", "out": 1, "to": "9"},
+    {"from": "9", "out": 1, "to": "10"},
+    {"from": "10", "out": 1, "to": "11"},
+    {"from": "11", "out": 1, "to": "12"},
+    {"from": "12", "out": 1, "to": "15"},
+    {"from": "12", "out": 2, "to": "13"},
+    {"from": "15", "out": 1, "to": "16"}
+  ]
+}

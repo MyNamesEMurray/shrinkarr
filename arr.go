@@ -3,25 +3,21 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 )
 
-type Arr struct{ Kind, URL, Key string }
-
 var httpc = &http.Client{Timeout: 30 * time.Second}
 
-func (a Arr) call(method, path string, body, out any) error {
-	var r *bytes.Reader
+func arrCall(a ArrConf, method, path string, body, out any) error {
+	var buf bytes.Buffer
 	if body != nil {
-		b, _ := json.Marshal(body)
-		r = bytes.NewReader(b)
-	} else {
-		r = bytes.NewReader(nil)
+		json.NewEncoder(&buf).Encode(body)
 	}
-	req, err := http.NewRequest(method, strings.TrimRight(a.URL, "/")+path, r)
+	req, err := http.NewRequest(method, strings.TrimRight(a.URL, "/")+path, &buf)
 	if err != nil {
 		return err
 	}
@@ -41,39 +37,75 @@ func (a Arr) call(method, path string, body, out any) error {
 	return nil
 }
 
-// notifyArrs tells whichever Radarr/Sonarr owns the file to rescan it.
-func notifyArrs(path string) {
-	p := mapPath(path)
-	for _, a := range cfg.Arrs {
-		list, cmd, idField := "/api/v3/movie", "RescanMovie", "movieId"
-		if a.Kind == "sonarr" {
-			list, cmd, idField = "/api/v3/series", "RescanSeries", "seriesId"
-		}
+func arrKind(a ArrConf) (list, cmd, idField string) {
+	if a.Kind == "sonarr" {
+		return "/api/v3/series", "RescanSeries", "seriesId"
+	}
+	return "/api/v3/movie", "RescanMovie", "movieId"
+}
+
+// notifyArrs tells whichever Radarr/Sonarr owns the file to rescan it. Returns a log line.
+func notifyArrs(path string) string {
+	s := cfg()
+	if len(s.Arrs) == 0 {
+		return "no Radarr/Sonarr configured"
+	}
+	p := path
+	if s.PathMapFrom != "" && strings.HasPrefix(p, s.PathMapFrom) {
+		p = s.PathMapTo + strings.TrimPrefix(p, s.PathMapFrom)
+	}
+	var msgs []string
+	for _, a := range s.Arrs {
+		list, cmd, idField := arrKind(a)
 		var items []struct {
 			ID   int    `json:"id"`
 			Path string `json:"path"`
 		}
-		if err := a.call("GET", list, nil, &items); err != nil {
-			logf("%s: %v", a.Kind, err)
+		if err := arrCall(a, "GET", list, nil, &items); err != nil {
+			msgs = append(msgs, fmt.Sprintf("%s: %v", a.Kind, err))
 			continue
 		}
 		for _, it := range items {
 			if it.Path != "" && strings.HasPrefix(p, strings.TrimRight(it.Path, "/")+"/") {
-				if err := a.call("POST", "/api/v3/command", map[string]any{"name": cmd, idField: it.ID}, nil); err != nil {
-					logf("%s: %v", a.Kind, err)
-				} else {
-					logf("%s: %s id %d", a.Kind, cmd, it.ID)
+				if err := arrCall(a, "POST", "/api/v3/command", map[string]any{"name": cmd, idField: it.ID}, nil); err != nil {
+					return fmt.Sprintf("%s: %v", a.Kind, err)
 				}
-				return
+				return fmt.Sprintf("%s: %s id %d", a.Kind, cmd, it.ID)
 			}
 		}
+		msgs = append(msgs, fmt.Sprintf("%s: no item owns %s", a.Kind, p))
 	}
+	return strings.Join(msgs, "; ")
 }
 
-// mapPath converts a container path to the path the arrs see, using PATH_MAP=from:to.
-func mapPath(p string) string {
-	if cfg.PathFrom != "" && strings.HasPrefix(p, cfg.PathFrom) {
-		return cfg.PathTo + strings.TrimPrefix(p, cfg.PathFrom)
+// testArr checks URL and API key for the Settings page.
+func testArr(a ArrConf) error {
+	var st struct {
+		Version string `json:"version"`
 	}
-	return p
+	if err := arrCall(a, "GET", "/api/v3/system/status", nil, &st); err != nil {
+		return err
+	}
+	if st.Version == "" {
+		return errors.New("connected, but that doesn't look like Radarr/Sonarr")
+	}
+	return nil
+}
+
+func discord(msg string) error { return discordTo(cfg().DiscordURL, msg) }
+
+func discordTo(url, msg string) error {
+	if url == "" {
+		return nil
+	}
+	b, _ := json.Marshal(map[string]string{"content": msg})
+	resp, err := httpc.Post(url, "application/json", bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return errors.New(resp.Status)
+	}
+	return nil
 }

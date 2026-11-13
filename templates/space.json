@@ -1,0 +1,26 @@
+{
+  "id": "tpl-space",
+  "name": "Save space, keep everything (HEVC)",
+  "description": "The simple choice. Re-encodes older video (H.264, MPEG-4, ...) to HEVC at a quality you can't tell apart from the original. Keeps every audio and subtitle track and the file type. Keeps the original if the saving is under 10%.",
+  "nodes": [
+    {"id": "1", "type": "start"},
+    {"id": "2", "type": "check_codec", "params": {"codecs": "hevc,av1"}},
+    {"id": "3", "type": "video_encode", "params": {"codec": "hevc", "mode": "auto", "vmaf": 95}},
+    {"id": "4", "type": "run_ffmpeg"},
+    {"id": "5", "type": "check_saved", "params": {"percent": 10}},
+    {"id": "6", "type": "replace", "params": {"original": "delete"}},
+    {"id": "7", "type": "notify_arr"},
+    {"id": "8", "type": "keep_original", "params": {"reason": "saved less than 10%"}},
+    {"id": "9", "type": "keep_original", "params": {"reason": "already HEVC or AV1"}}
+  ],
+  "edges": [
+    {"from": "1", "out": 1, "to": "2"},
+    {"from": "2", "out": 1, "to": "9"},
+    {"from": "2", "out": 2, "to": "3"},
+    {"from": "3", "out": 1, "to": "4"},
+    {"from": "4", "out": 1, "to": "5"},
+    {"from": "5", "out": 1, "to": "6"},
+    {"from": "5", "out": 2, "to": "8"},
+    {"from": "6", "out": 1, "to": "7"}
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "id": "tpl-compat",
+  "name": "Plays anywhere (H.264 1080p MP4)",
+  "description": "For old TVs, browsers and streaming sticks. Converts to H.264 at up to 1080p with AAC audio and a stereo track. HDR files are left alone, because converting them needs tone mapping.",
+  "nodes": [
+    {"id": "1", "type": "start"},
+    {"id": "2", "type": "check_hdr"},
+    {"id": "3", "type": "keep_original", "params": {"reason": "HDR, left alone"}},
+    {"id": "4", "type": "check_codec", "params": {"codecs": "h264"}},
+    {"id": "5", "type": "video_encode", "params": {"codec": "h264", "mode": "fixed", "quality": 21}},
+    {"id": "6", "type": "video_downscale", "params": {"height": "1080"}},
+    {"id": "7", "type": "set_container", "params": {"container": "mp4"}},
+    {"id": "8", "type": "audio_convert", "params": {"keep": "aac", "to": "aac", "bitrate": "384k", "channels": "6"}},
+    {"id": "9", "type": "audio_stereo"},
+    {"id": "10", "type": "run_ffmpeg"},
+    {"id": "11", "type": "replace", "params": {"original": "delete"}},
+    {"id": "12", "type": "notify_arr"}
+  ],
+  "edges": [
+    {"from": "1", "out": 1, "to": "2"},
+    {"from": "2", "out": 1, "to": "3"},
+    {"from": "2", "out": 2, "to": "4"},
+    {"from": "4", "out": 1, "to": "7"},
+    {"from": "4", "out": 2, "to": "5"},
+    {"from": "5", "out": 1, "to": "6"},
+    {"from": "6", "out": 1, "to": "7"},
+    {"from": "7", "out": 1, "to": "8"},
+    {"from": "8", "out": 1, "to": "9"},
+    {"from": "9", "out": 1, "to": "10"},
+    {"from": "10", "out": 1, "to": "11"},
+    {"from": "11", "out": 1, "to": "12"}
+  ]
+}

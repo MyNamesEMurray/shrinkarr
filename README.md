@@ -1,67 +1,74 @@
-# shrinkarr
+# Shrinkarr
 
-A small, single-box Tdarr replacement. One fixed job: make every video in your library an
-Apple TV friendly HEVC MP4, using the NVIDIA GPU, at the smallest size that still meets a VMAF floor.
+Shrinkarr makes your video library smaller and easier to play. It re-encodes video with your
+GPU at a quality you can't tell apart from the original. It is a simpler, self-hosted take on Tdarr.
 
-## What it does per file
+- **Templates for non-tinkerers.** Pick one in the setup wizard and you're done.
+- **Visual flow editor** for everyone else. Drag blocks, connect them, test on a real file.
+- **Auto quality.** Encodes short samples and picks the smallest file that still scores your
+  VMAF target (95 ≈ visually identical), like Alchemist/ab-av1.
+- **Any hardware.** NVIDIA NVENC, Intel QuickSync, AMD/Intel VAAPI, or CPU. Detected at startup.
+- **Safe by default.** Starts in test mode. The original is only replaced after the new file is checked
+  (length matches, video present). It can be moved to a folder instead of being deleted.
+- **Stats** for space saved per day, per library and per codec.
+- Queue with live progress, pause, cancel, retry, ignore. Quiet hours. Radarr/Sonarr rescan.
+  Discord alerts. Optional password.
 
-1. `ffprobe` the file. Skip if it is already HEVC in MP4 with no Dolby Vision and MP4-safe audio.
-2. Already HEVC (e.g. MKV, or DV profile 8): **remux only**, no re-encode. DV RPU is stripped to plain HDR10 with `dovi_rpu=strip=1`.
-3. Not HEVC: encode three 10 s samples with `hevc_nvenc` and score them with libvmaf.
-   Binary-search CQ between `CQ_MIN` and `CQ_MAX` for the highest CQ whose worst sample still
-   meets `VMAF_FLOOR`. Then encode the full file at that CQ.
-4. Audio: AAC/AC3/EAC3/ALAC/MP3 copied; anything else (TrueHD, DTS, FLAC, PCM) to EAC3 640k, max 5.1.
-5. Subtitles: text subs to `mov_text`. Image subs (PGS/VobSub), data and attachment streams are dropped (MP4 can't hold them).
-6. Video tagged `hvc1` so Apple TV direct plays it.
-7. Output written to a hidden temp file next to the source, verified (duration within 2 s, HEVC present,
-   smaller than source when re-encoded), given the source's owner and mode, renamed into place,
-   then the original is deleted.
-8. Radarr/Sonarr told to rescan that movie/series.
+## Install on Unraid
 
-NVDEC decodes on the GPU. If it can't decode a source (e.g. Hi10P H.264), it retries with CPU decode.
+1. NVIDIA only: install the **Nvidia Driver** plugin.
+2. Docker → Add Container → Template URL:
+   `https://raw.githubusercontent.com/MyNamesEMurray/shrinkarr/main/unraid/shrinkarr.xml`
+3. Set **Media** to your media share.
+   - NVIDIA: add `--runtime=nvidia` to Extra Parameters and set `NVIDIA_VISIBLE_DEVICES=all`.
+   - Intel or AMD: set **Intel/AMD GPU** to `/dev/dri`.
+4. Open the web UI on port 8265 and follow the wizard.
 
-## Unraid
-
-Requires the Nvidia Driver plugin.
+## Docker
 
 ```
-docker run -d --name shrinkarr --runtime=nvidia \
-  -e NVIDIA_VISIBLE_DEVICES=all \
-  -e LIBRARIES=/media/movies,/media/tv \
-  -e ARRS='radarr|http://radarr:7878|RADARR_KEY,sonarr|http://sonarr:8989|SONARR_KEY' \
-  -e PATH_MAP=/media:/data/media \
-  -e DRY_RUN=1 \
-  -v /mnt/user/data/media:/media \
-  -v /mnt/user/appdata/shrinkarr:/config \
+docker run -d --name shrinkarr \
   -p 8265:8265 \
-  ghcr.io/OWNER/shrinkarr:latest
+  -v /path/to/media:/media \
+  -v /path/to/appdata/shrinkarr:/config \
+  --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all \
+  ghcr.io/mynamesemurray/shrinkarr:latest
 ```
 
-Start with `DRY_RUN=1`: it probes everything and logs the ffmpeg commands without touching files.
-Remove it once the status page at `:8265` looks right.
+For Intel or AMD, replace the `--runtime=nvidia …` line with `--device /dev/dri`.
 
-## Settings (env)
+## Templates
 
-| Var | Default | Meaning |
-|---|---|---|
-| `LIBRARIES` | `/media` | Comma-separated folders to scan |
-| `STATE` | `/config/state.json` | Job history |
-| `TEMP_DIR` | `/tmp` | VMAF sample scratch space |
-| `SCAN_MINUTES` | `30` | Rescan interval |
-| `MIN_AGE_MINUTES` | `10` | Ignore files modified more recently (still copying) |
-| `VMAF_FLOOR` | `95` | Minimum VMAF on the worst sample |
-| `VMAF_THREADS` | `2` | CPU threads for libvmaf |
-| `CQ_MIN` / `CQ_MAX` | `18` / `32` | CQ search range |
-| `ARRS` | | `kind|url|apikey`, comma-separated; kind is `radarr` or `sonarr` |
-| `PATH_MAP` | | `containerPrefix:arrPrefix` if the arrs mount media at a different path |
-| `DRY_RUN` | | `1` = change nothing |
+| Template | What it does |
+|---|---|
+| Save space, keep everything (HEVC) | Re-encodes older codecs to HEVC. Keeps all tracks and the file type. Recommended. |
+| Apple TV / Plex direct play (HEVC MP4) | HEVC in MP4 with `hvc1` tag, EAC3 audio, Dolby Vision reduced to HDR10. HEVC files are only repackaged. |
+| Repackage to MP4 (no re-encode) | Lossless and fast. Converts only audio/subtitles MP4 can't hold. |
+| Plays anywhere (H.264 1080p MP4) | H.264, up to 1080p, AAC plus a stereo track. Skips HDR. |
+| Smallest files (AV1) | AV1. Best with RTX 40 / Arc / RX 7000. |
 
-Failed files are not retried until they change. To retry everything, stop the container and delete `state.json`.
+Templates are read-only. Press **Duplicate** to make your own version.
+
+## How flows work
+
+Each file enters at **Start** and follows the arrows. **Checks** (codec, HDR, resolution, bitrate,
+size, name…) pick an output. **Video / Audio / Subtitle** blocks collect settings. **Run FFmpeg**
+does the work into a hidden temp file next to the original. **Replace original** swaps it in.
+Blocks after Run FFmpeg (like **Saved at least…**) look at the new file.
+
+Use **Test on a file** in the editor to see the path a file takes and the exact ffmpeg command.
+Nothing is changed.
+
+## Files
+
+`/config` holds `settings.json`, `flows/`, `files.json` (latest state per file) and
+`history.jsonl` (every job, used for stats). Back it up with your appdata.
 
 ## Develop
 
 ```
-go test ./...
+go test ./...                     # needs ffmpeg with libx265 for the end-to-end tests
+CONFIG_DIR=./cfg go run .         # http://localhost:8265
 ```
 
-The end-to-end test needs `ffmpeg` with `libx265`. NVENC and VMAF paths need the container on a GPU host.
+Backend: Go standard library only. Frontend: plain JS in `web/`, with [Drawflow](https://github.com/jerosoler/Drawflow) (MIT) for the editor.

@@ -1,0 +1,20 @@
+{
+  "id": "tpl-remux",
+  "name": "Repackage to MP4 (no re-encode)",
+  "description": "Fast and lossless. Moves video into an MP4 file without re-encoding it, and converts only the audio and subtitles MP4 can't hold. Image subtitles (PGS) are dropped.",
+  "nodes": [
+    {"id": "1", "type": "start"},
+    {"id": "2", "type": "set_container", "params": {"container": "mp4"}},
+    {"id": "3", "type": "audio_convert", "params": {"keep": "", "to": "eac3", "bitrate": "640k", "channels": "6"}},
+    {"id": "4", "type": "run_ffmpeg"},
+    {"id": "5", "type": "replace", "params": {"original": "delete"}},
+    {"id": "6", "type": "notify_arr"}
+  ],
+  "edges": [
+    {"from": "1", "out": 1, "to": "2"},
+    {"from": "2", "out": 1, "to": "3"},
+    {"from": "3", "out": 1, "to": "4"},
+    {"from": "4", "out": 1, "to": "5"},
+    {"from": "5", "out": 1, "to": "6"}
+  ]
+}

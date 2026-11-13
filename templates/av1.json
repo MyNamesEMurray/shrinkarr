@@ -1,0 +1,30 @@
+{
+  "id": "tpl-av1",
+  "name": "Smallest files (AV1)",
+  "description": "AV1 makes the smallest files but is slow without a new GPU (NVIDIA RTX 40, Intel Arc, AMD RX 7000) and older devices can't play it. Keeps all tracks.",
+  "nodes": [
+    {"id": "1", "type": "start"},
+    {"id": "2", "type": "check_codec", "params": {"codecs": "av1"}},
+    {"id": "3", "type": "keep_original", "params": {"reason": "already AV1"}},
+    {"id": "4", "type": "check_bitrate", "params": {"mbps": 2}},
+    {"id": "5", "type": "keep_original", "params": {"reason": "bitrate already low"}},
+    {"id": "6", "type": "video_encode", "params": {"codec": "av1", "mode": "auto", "vmaf": 95, "speed": "balanced"}},
+    {"id": "7", "type": "run_ffmpeg"},
+    {"id": "8", "type": "check_saved", "params": {"percent": 15}},
+    {"id": "9", "type": "keep_original", "params": {"reason": "saved less than 15%"}},
+    {"id": "10", "type": "replace", "params": {"original": "delete"}},
+    {"id": "11", "type": "notify_arr"}
+  ],
+  "edges": [
+    {"from": "1", "out": 1, "to": "2"},
+    {"from": "2", "out": 1, "to": "3"},
+    {"from": "2", "out": 2, "to": "4"},
+    {"from": "4", "out": 1, "to": "6"},
+    {"from": "4", "out": 2, "to": "5"},
+    {"from": "6", "out": 1, "to": "7"},
+    {"from": "7", "out": 1, "to": "8"},
+    {"from": "8", "out": 1, "to": "10"},
+    {"from": "8", "out": 2, "to": "9"},
+    {"from": "10", "out": 1, "to": "11"}
+  ]
+}
