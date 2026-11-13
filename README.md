@@ -1,4 +1,4 @@
-# tinydarr
+# shrinkarr
 
 A small, single-box Tdarr replacement. One fixed job: make every video in your library an
 Apple TV friendly HEVC MP4, using the NVIDIA GPU, at the smallest size that still meets a VMAF floor.
@@ -25,16 +25,16 @@ NVDEC decodes on the GPU. If it can't decode a source (e.g. Hi10P H.264), it ret
 Requires the Nvidia Driver plugin.
 
 ```
-docker run -d --name tinydarr --runtime=nvidia \
+docker run -d --name shrinkarr --runtime=nvidia \
   -e NVIDIA_VISIBLE_DEVICES=all \
   -e LIBRARIES=/media/movies,/media/tv \
   -e ARRS='radarr|http://radarr:7878|RADARR_KEY,sonarr|http://sonarr:8989|SONARR_KEY' \
   -e PATH_MAP=/media:/data/media \
   -e DRY_RUN=1 \
   -v /mnt/user/data/media:/media \
-  -v /mnt/user/appdata/tinydarr:/config \
+  -v /mnt/user/appdata/shrinkarr:/config \
   -p 8265:8265 \
-  ghcr.io/OWNER/tinydarr:latest
+  ghcr.io/OWNER/shrinkarr:latest
 ```
 
 Start with `DRY_RUN=1`: it probes everything and logs the ffmpeg commands without touching files.

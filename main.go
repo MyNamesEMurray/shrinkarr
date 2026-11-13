@@ -192,10 +192,10 @@ func worker() {
 }
 
 var page = template.Must(template.New("p").Parse(`<!doctype html><meta name=viewport content="width=device-width">
-<meta http-equiv=refresh content=15><title>tinydarr</title>
+<meta http-equiv=refresh content=15><title>shrinkarr</title>
 <style>body{font:14px system-ui;margin:1em}table{border-collapse:collapse;width:100%}td,th{padding:4px;border-bottom:1px solid #ddd;text-align:left}
 .failed{color:#b00}.running{color:#06c;font-weight:bold}.done{color:#080}pre{background:#f4f4f4;padding:8px;overflow:auto;max-height:300px}</style>
-<h1>tinydarr</h1><p>{{range $k, $v := .Counts}}{{$k}}: {{$v}} &nbsp; {{end}}</p>
+<h1>shrinkarr</h1><p>{{range $k, $v := .Counts}}{{$k}}: {{$v}} &nbsp; {{end}}</p>
 <table><tr><th>Status</th><th>File</th><th>Detail</th><th>Updated</th></tr>
 {{range .Rows}}<tr class="{{.Status}}"><td>{{.Status}}</td><td>{{.Path}}</td><td>{{.Detail}}</td><td>{{.Updated.Format "01-02 15:04"}}</td></tr>{{end}}
 </table><h2>Log</h2><pre>{{range .Logs}}{{.}}

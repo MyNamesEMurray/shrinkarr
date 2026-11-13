@@ -173,7 +173,7 @@ func process(src string) (status, detail, final string) {
 		}
 	}
 	// Temp output lives next to the source so the final rename is atomic; dotfile so Plex/arrs ignore it.
-	out := filepath.Join(dir, ".tinydarr-"+filepath.Base(final))
+	out := filepath.Join(dir, ".shrinkarr-"+filepath.Base(final))
 	args := append([]string{"-i", src}, pl.Args...)
 	args = append(args, videoArgs(pl, cq)...)
 	args = append(args, "-map_chapters", "0", "-f", "mp4", out)
