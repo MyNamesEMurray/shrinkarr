@@ -11,7 +11,7 @@
   <Overview>Shrinks your video library: re-encodes to HEVC/AV1 with your GPU at a quality you can't tell apart, with a visual flow editor and ready-made templates. Open the web UI and follow the setup wizard.&#xD;
 &#xD;
 NVIDIA: install the Nvidia Driver plugin, then add --runtime=nvidia to Extra Parameters and set NVIDIA_VISIBLE_DEVICES.&#xD;
-Intel / AMD: set the GPU device to /dev/dri.</Overview>
+Intel / AMD: Add another Path, Port, Variable, Label or Device → Device → /dev/dri.</Overview>
   <Category>MediaApp:Video Tools:</Category>
   <WebUI>http://[IP]:[PORT:8265]/</WebUI>
   <Icon>https://raw.githubusercontent.com/MyNamesEMurray/shrinkarr/main/unraid/icon.png</Icon>
@@ -20,7 +20,6 @@ Intel / AMD: set the GPU device to /dev/dri.</Overview>
   <Config Name="Media" Target="/media" Default="/mnt/user/data/media" Mode="rw" Description="Your movies and TV folder. Shrinkarr replaces files here, so it needs read/write." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/data/media</Config>
   <Config Name="Config" Target="/config" Default="/mnt/user/appdata/shrinkarr" Mode="rw" Description="Settings, flows and history" Type="Path" Display="advanced" Required="true" Mask="false">/mnt/user/appdata/shrinkarr</Config>
   <Config Name="Temp" Target="/tmp" Default="/mnt/user/appdata/shrinkarr/tmp" Mode="rw" Description="Scratch space for quality test samples" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/shrinkarr/tmp</Config>
-  <Config Name="Intel/AMD GPU" Target="" Default="" Mode="" Description="Set to /dev/dri for Intel QuickSync or AMD. Leave empty for NVIDIA or CPU." Type="Device" Display="always" Required="false" Mask="false"></Config>
   <Config Name="NVIDIA_VISIBLE_DEVICES" Target="NVIDIA_VISIBLE_DEVICES" Default="" Mode="" Description="NVIDIA only: 'all' or your GPU UUID. Needs --runtime=nvidia in Extra Parameters." Type="Variable" Display="always" Required="false" Mask="false"></Config>
   <Config Name="SHRINKARR_DISABLE_AUTH" Target="SHRINKARR_DISABLE_AUTH" Default="" Mode="" Description="Locked out of SSO or password? Set to 1, fix Settings, then clear it." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
 </Container>

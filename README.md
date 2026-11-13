@@ -21,7 +21,7 @@ GPU at a quality you can't tell apart from the original. It is a simpler, self-h
    `https://raw.githubusercontent.com/MyNamesEMurray/shrinkarr/main/unraid/shrinkarr.xml`
 3. Set **Media** to your media share.
    - NVIDIA: add `--runtime=nvidia` to Extra Parameters and set `NVIDIA_VISIBLE_DEVICES=all`.
-   - Intel or AMD: set **Intel/AMD GPU** to `/dev/dri`.
+   - Intel or AMD: click **Add another Path, Port, Variable, Label or Device**, choose Device, enter `/dev/dri`.
 4. Open the web UI on port 8265 and follow the wizard.
 
 ## Docker
